@@ -105,13 +105,18 @@ func Open(data []byte) (*Artifact, error) {
 	if a.offsets[0] != 0 {
 		return nil, errors.New("artifact: string 0 does not start the arena")
 	}
-	for i := range nStrings {
-		lo, hi := a.offsets[i], a.offsets[i+1]
-		if lo > hi || uint64(hi) > arenaLen {
-			return nil, fmt.Errorf("artifact: string %d out of the arena", i)
+	// A valid arena whose strings all start on a rune boundary holds only
+	// valid strings, and one pass over it is far cheaper than one per string.
+	if !utf8.ValidString(a.arena) {
+		return nil, errors.New("artifact: string arena is not UTF-8")
+	}
+	for i := 1; i <= nStrings; i++ {
+		lo, hi := a.offsets[i-1], a.offsets[i]
+		if lo > hi {
+			return nil, fmt.Errorf("artifact: string %d out of the arena", i-1)
 		}
-		if !utf8.ValidString(a.arena[lo:hi]) {
-			return nil, fmt.Errorf("artifact: string %d is not UTF-8", i)
+		if uint64(hi) < arenaLen && !utf8.RuneStart(a.arena[hi]) {
+			return nil, fmt.Errorf("artifact: string %d starts inside a character", i)
 		}
 	}
 

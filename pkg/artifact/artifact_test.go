@@ -50,7 +50,7 @@ func fixture() []TableData {
 	set("lookup",
 		Column{String: []string{"make", "bodystyle", "make", "bodystyle"}},
 		Column{Int32: []int32{474, 64, 441, 5}},
-		Column{String: []string{"HONDA", "Sedan", "TESLA", "Convertible"}},
+		Column{String: []string{"HONDA", "Sedan", "Citroën", "Convertible"}},
 	)
 	return tables
 }
@@ -219,6 +219,16 @@ func TestOpenRejectsDamage(t *testing.T) {
 		"string offsets": func(b []byte) []byte {
 			off := le.Uint64(b[headerSize:])
 			le.PutUint32(b[off+4:], 1<<30)
+			return b
+		},
+		"split character": func(b []byte) []byte {
+			a, _ := Open(b)
+			for r := range uint32(a.Strings()) {
+				if s, _ := a.String(r); s == "Citroën" {
+					off := le.Uint64(b[headerSize:]) + 4*uint64(r)
+					le.PutUint32(b[off+4:], le.Uint32(b[off:])+6) // inside the ë
+				}
+			}
 			return b
 		},
 	} {
