@@ -10,9 +10,44 @@ offline VIN decoder with parity to NHTSA's vPIC.
   the package (`go doc github.com/joshuasprow/nitrovin-data/pkg/artifact`); why
   this format is nitrovin's
   [ADR 0003](https://github.com/joshuasprow/nitrovin/blob/main/docs/adr/0003-custom-indexed-artifact-embedded-raw.md).
-- The artifact itself is built by `nitrovin-import` in the nitrovin repo and
-  will be embedded here, one data month per release. Versioning and the first
-  tag are decided by nitrovin's release policy.
+- `pkg/embedded` is one data month's artifact, `go:embed`-ed raw:
+  `embedded.Artifact()`, `embedded.Month`, `embedded.BLAKE3`. Its
+  `manifest.json` records the artifact (format, month, size, blake3, rows per
+  table), NHTSA's dump (URL, size, SHA-256), the oracle's collation and the
+  nitrovin commit whose `cmd/nitrovin-import` built it. Importing it adds about
+  61 MB to a binary; `pkg/artifact` alone adds nothing.
+
+## Versions and releases
+
+Tags are `v<format>.<YYYYMM>.<rebuild>`: `v1.202610.0` is artifact format 1,
+data month 2026_10, first build of that month
+([ADR 0007](https://github.com/joshuasprow/nitrovin/blob/main/docs/adr/0007-release-and-versioning.md)).
+nitrovin pins one in its `go.mod`. Every release keeps, forever, the
+artifact, NHTSA's dump zip (so the oracle can re-run a month NHTSA no longer
+hosts), `manifest.json`, `checksums.txt`, and a cosign keyless bundle for each
+of those, signed by `.github/workflows/release.yml` on `main`:
+
+```sh
+cosign verify-blob --bundle checksums.txt.sigstore.json \
+  --certificate-identity https://github.com/joshuasprow/nitrovin-data/.github/workflows/release.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
+sha256sum -c checksums.txt
+```
+
+`release.yml` rebuilds the embedded month from the dump on every pull
+request and requires the committed artifact and manifest byte for byte.
+Dispatched on `main`, it does the same, then tags the commit and publishes
+the release. `scripts/build.sh` is that build, runnable on a workstation
+with a nitrovin checkout:
+
+```sh
+../nitrovin/scripts/oracle.sh up
+scripts/build.sh ../nitrovin 2026_10 /tmp/out
+cmp /tmp/out/nitrovin-2026_10.artifact pkg/embedded/nitrovin.artifact
+```
+
+A new month replaces `pkg/embedded/nitrovin.artifact` and `manifest.json`
+with `build.sh`'s output and updates `Month` and `BLAKE3`.
 
 The data is NHTSA's, a work of the United States Government; see `NOTICE`.
 The code is MIT.

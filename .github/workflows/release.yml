@@ -1,0 +1,165 @@
+# The data release (ADR 0007 in joshuasprow/nitrovin). On every pull request:
+# the package tests, then rebuild the embedded month from NHTSA's dump with the
+# importer commit manifest.json names, and require the committed artifact and
+# manifest byte for byte. Dispatched on main, the same build, then tag
+# v<format>.<YYYYMM>.<rebuild> on the built commit and publish its release:
+# nitrovin-<month>.artifact, NHTSA's vPICList_lite_<month>.custom.zip,
+# manifest.json, checksums.txt, and a cosign keyless bundle (<file>.sigstore.json,
+# signed with this workflow's GitHub OIDC identity) for each of the four.
+name: Data release
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+defaults:
+  run:
+    # Explicit bash adds -o pipefail, so `| tee` cannot hide a failure.
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        # The custom dump is archive format 1.16: pg_restore 17 or newer.
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: vpic
+          # Collate C, as nitrovin's scripts/oracle.sh up: restore refuses any
+          # other collation, and manifest.json records it.
+          POSTGRES_INITDB_ARGS: --lc-collate=C
+        options: >-
+          --shm-size 1g
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    outputs:
+      month: ${{ steps.manifest.outputs.month }}
+      format: ${{ steps.manifest.outputs.format }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: data
+
+      - name: Read the manifest
+        id: manifest
+        run: jq -r '"month=\(.data_month)", "format=\(.format)", "commit=\(.importer.commit)"' data/pkg/embedded/manifest.json | tee -a "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          repository: joshuasprow/nitrovin
+          ref: ${{ steps.manifest.outputs.commit }}
+          path: nitrovin
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: data/go.mod
+          cache-dependency-path: |
+            data/go.sum
+            nitrovin/go.sum
+
+      - name: Test
+        working-directory: data
+        run: go test -count=1 ./...
+
+      - name: Rebuild from the dump
+        env:
+          ORACLE_CONTAINER: ${{ job.services.postgres.id }}
+        run: data/scripts/build.sh nitrovin "${{ steps.manifest.outputs.month }}" "$RUNNER_TEMP/release"
+
+      - name: Require the committed bytes
+        env:
+          MONTH: ${{ steps.manifest.outputs.month }}
+        run: |
+          cmp "$RUNNER_TEMP/release/nitrovin-$MONTH.artifact" data/pkg/embedded/nitrovin.artifact
+          diff -u data/pkg/embedded/manifest.json "$RUNNER_TEMP/release/manifest.json"
+
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # the tag and the release
+      id-token: write # cosign keyless: the OIDC token Fulcio certifies
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MONTH: ${{ needs.build.outputs.month }}
+      FORMAT: ${{ needs.build.outputs.format }}
+      IDENTITY: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release.yml@refs/heads/main
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: release
+
+      - uses: sigstore/cosign-installer@v4
+
+      - name: Choose the tag
+        id: tag
+        run: |
+          # v<format>.<YYYYMM>.<rebuild>: the rebuild counts this month's tags.
+          prefix="v$FORMAT.${MONTH/_/}."
+          refs=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$prefix")
+          if done=$(jq -er --arg sha "$GITHUB_SHA" 'map(select(.object.sha == $sha))[0].ref' <<<"$refs"); then
+            echo "release: $GITHUB_SHA is already released as ${done#refs/tags/}" >&2
+            exit 1
+          fi
+          echo "tag=$prefix$(jq length <<<"$refs")" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Checksums and signatures
+        working-directory: release
+        run: |
+          assets=("nitrovin-$MONTH.artifact" "vPICList_lite_$MONTH.custom.zip" manifest.json)
+          sha256sum "${assets[@]}" >checksums.txt
+          for f in "${assets[@]}" checksums.txt; do
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
+            cosign verify-blob --bundle "$f.sigstore.json" \
+              --certificate-identity "$IDENTITY" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com "$f"
+          done
+          ls -l
+
+      - name: Publish
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          {
+            echo "NHTSA vPIC data month **$MONTH** as nitrovin artifact format $FORMAT."
+            echo
+            echo '| | |'
+            echo '| --- | --- |'
+            jq -r '"| artifact | `nitrovin-\(.data_month).artifact`, \(.bytes) bytes, blake3 `\(.blake3)` |",
+              "| dump | [`\(.dump.url | split("/") | last)`](\(.dump.url)), \(.dump.bytes) bytes, sha256 `\(.dump.sha256)` |",
+              "| oracle | Postgres, collate \(.collate), ctype \(.ctype) |",
+              "| importer | [`\(.importer.package)` at `\(.importer.commit[:12])`](https://github.com/joshuasprow/nitrovin/tree/\(.importer.commit)/\(.importer.package)) |"' \
+              release/manifest.json
+            echo
+            echo 'Every asset has a cosign keyless bundle. To verify one:'
+            echo
+            echo '```sh'
+            echo "cosign verify-blob --bundle checksums.txt.sigstore.json \\"
+            echo "  --certificate-identity $IDENTITY \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt"
+            echo 'sha256sum -c checksums.txt'
+            echo '```'
+          } >notes.md
+          gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md
