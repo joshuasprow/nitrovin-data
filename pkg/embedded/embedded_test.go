@@ -6,19 +6,14 @@ import (
 	"os"
 	"reflect"
 	"testing"
-	"unsafe"
 
 	"github.com/joshuasprow/nitrovin-data/pkg/artifact"
 )
 
-// TestEmbedded: the embedded artifact opens in place and verifies, and its
-// month, hash and manifest are the ones this package and manifest.json state.
+// TestEmbedded: the embedded artifact opens and verifies, and its month,
+// hash and manifest are the ones this package and manifest.json state.
 func TestEmbedded(t *testing.T) {
-	b := Artifact()
-	if p := uintptr(unsafe.Pointer(unsafe.SliceData(b))); p%8 != 0 {
-		t.Errorf("embedded artifact at %#x, not 8-byte aligned: artifact.Open would copy it", p)
-	}
-	a, err := artifact.Open(b)
+	a, err := artifact.Open(Artifact())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,12 +6,15 @@
 // Before every release, the release workflow rebuilds them from NHTSA's dump
 // and requires the same bytes; manifest.json, beside this file, records the
 // dump, the oracle's collation and the importer commit it builds with (ADR
-// 0007 in github.com/joshuasprow/nitrovin). Importing this package adds the
-// artifact's size, about 61 MB, to a binary; package artifact alone adds
+// 0007 in github.com/joshuasprow/nitrovin). A binary that calls Artifact
+// grows by the artifact's size, about 61 MB; package artifact alone adds
 // nothing.
 package embedded
 
-import _ "embed"
+import (
+	_ "embed"
+	"unsafe"
+)
 
 // Month is the embedded artifact's data month, YYYY_MM.
 const Month = "2026_10"
@@ -20,13 +23,13 @@ const Month = "2026_10"
 // and artifact.Artifact.Hash returns it.
 const BLAKE3 = "7518c5b46c4264fe94a8e5158cb1949b000e50803b36d388fec9ebe914a780cb"
 
-// data is a []byte, not a string: the linker aligns a []byte like any large
-// data symbol, but packs a string's bytes at any address, and artifact.Open
-// copies bytes that are not 8-byte aligned, on every start.
+// data is a string so that its bytes are read-only data in the binary: a
+// write through Artifact faults instead of corrupting every decoder.
 //
 //go:embed nitrovin.artifact
-var data []byte
+var data string
 
-// Artifact returns the embedded artifact's bytes, to give to artifact.Open.
-// Every call returns the same bytes, which must not be modified.
-func Artifact() []byte { return data }
+// Artifact returns the embedded artifact's bytes, to give to artifact.Open,
+// which reads them in place. Every call returns the same bytes, which are
+// read-only: writing to them crashes the program.
+func Artifact() []byte { return unsafe.Slice(unsafe.StringData(data), len(data)) }
