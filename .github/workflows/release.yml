@@ -1,15 +1,23 @@
 # The data release (ADR 0007 in joshuasprow/nitrovin). On every pull request:
 # the package tests, then rebuild the embedded month from NHTSA's dump with the
 # importer commit manifest.json names, and require the committed artifact and
-# manifest byte for byte. Dispatched on main, the same build, then tag
+# manifest byte for byte. On main, the same build, then tag
 # v<format>.<YYYYMM>.<rebuild> on the built commit and publish its release:
 # nitrovin-<month>.artifact, NHTSA's vPICList_lite_<month>.custom.zip,
 # manifest.json, checksums.txt, and a cosign keyless bundle (<file>.sigstore.json,
-# signed with this workflow's GitHub OIDC identity) for each of the four.
+# signed with this workflow's GitHub OIDC identity) for each of them. A
+# release runs when dispatched on main, and when a push to main changes the
+# embedded manifest: nitrovin's refresh (.github/workflows/refresh.yml there)
+# pushes each gated month that way. A commit that names its refresh run
+# (a "Refresh-Run: <run id>" trailer) also publishes that run's
+# stale-cache.jsonl and parity-<month>.tar.gz (nitrovin's ADR 0006 and 0008).
 name: Data release
 
 on:
   pull_request:
+  push:
+    branches: [main]
+    paths: [pkg/embedded/manifest.json]
   workflow_dispatch:
 
 permissions:
@@ -85,7 +93,7 @@ jobs:
           diff -u data/pkg/embedded/manifest.json "$RUNNER_TEMP/release/manifest.json"
 
       - uses: actions/upload-artifact@v7
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request'
         with:
           name: release
           path: ${{ runner.temp }}/release
@@ -94,7 +102,7 @@ jobs:
 
   release:
     needs: build
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -126,10 +134,24 @@ jobs:
           fi
           echo "tag=$prefix$(jq length <<<"$refs")" | tee -a "$GITHUB_OUTPUT"
 
+      - name: The refresh's assets
+        run: |
+          run=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq .commit.message |
+            sed -n 's/^Refresh-Run: \([0-9][0-9]*\)$/\1/p')
+          if [ -z "$run" ]; then
+            echo "release: $GITHUB_SHA names no refresh run"
+            exit 0
+          fi
+          id=$(gh api "repos/joshuasprow/nitrovin/actions/runs/$run/artifacts?name=data-release-extras" --jq '.artifacts[0].id // ""')
+          [ -n "$id" ] || { echo "release: nitrovin run $run has no data-release-extras artifact" >&2; exit 1; }
+          gh api "repos/joshuasprow/nitrovin/actions/artifacts/$id/zip" >"$RUNNER_TEMP/extras.zip"
+          unzip -o "$RUNNER_TEMP/extras.zip" -d release
+          echo "REFRESH_RUN=$run" >>"$GITHUB_ENV"
+
       - name: Checksums and signatures
         working-directory: release
         run: |
-          assets=("nitrovin-$MONTH.artifact" "vPICList_lite_$MONTH.custom.zip" manifest.json)
+          assets=(*)
           sha256sum "${assets[@]}" >checksums.txt
           for f in "${assets[@]}" checksums.txt; do
             cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
@@ -153,6 +175,11 @@ jobs:
               "| oracle | Postgres, collate \(.collate), ctype \(.ctype) |",
               "| importer | [`\(.importer.package)` at `\(.importer.commit[:12])`](https://github.com/joshuasprow/nitrovin/tree/\(.importer.commit)/\(.importer.package)) |"' \
               release/manifest.json
+            if [ -n "${REFRESH_RUN:-}" ]; then
+              echo "| refresh | [nitrovin run $REFRESH_RUN](https://github.com/joshuasprow/nitrovin/actions/runs/$REFRESH_RUN): built, and gated against the freshened oracle |"
+              echo "| stale-cache | \`stale-cache.jsonl\`: $(wc -l <release/stale-cache.jsonl | tr -d ' ') calls on which the stock and freshened oracles differ |"
+              echo "| parity key | \`parity-$MONTH.tar.gz\`: the frozen answer key (\`testdata/parity/$MONTH\`) |"
+            fi
             echo
             echo 'Every asset has a cosign keyless bundle. To verify one:'
             echo

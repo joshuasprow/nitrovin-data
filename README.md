@@ -35,10 +35,11 @@ sha256sum -c checksums.txt
 ```
 
 `release.yml` rebuilds the embedded month from the dump on every pull
-request and requires the committed artifact and manifest byte for byte.
-Dispatched on `main`, it does the same, then tags the commit and publishes
-the release. `scripts/build.sh` is that build, runnable on a workstation
-with a nitrovin checkout:
+request and requires the committed artifact and manifest byte for byte. On
+`main`, dispatched or on a push that changes `pkg/embedded/manifest.json`, it
+does the same, then tags the commit and publishes the release.
+`scripts/build.sh` is that build, runnable on a workstation with a nitrovin
+checkout:
 
 ```sh
 ../nitrovin/scripts/oracle.sh up
@@ -47,7 +48,12 @@ cmp /tmp/out/nitrovin-2026_10.artifact pkg/embedded/nitrovin.artifact
 ```
 
 A new month replaces `pkg/embedded/nitrovin.artifact` and `manifest.json`
-with `build.sh`'s output and updates `Month` and `BLAKE3`.
+with `build.sh`'s output and updates `Month` and `BLAKE3`. nitrovin's monthly
+refresh (its `.github/workflows/refresh.yml`) does that unattended: once the
+month passes nitrovin's parity gates it pushes the commit to `main` with a
+deploy key, naming its run in a `Refresh-Run:` trailer, and the release also
+carries that run's `stale-cache.jsonl` (the calls on which stock and freshened
+Postgres differ) and `parity-<month>.tar.gz` (the frozen answer key).
 
 The data is NHTSA's, a work of the United States Government; see `NOTICE`.
 The code is MIT.
