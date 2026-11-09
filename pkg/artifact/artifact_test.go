@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"math/rand/v2"
+	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -193,13 +195,25 @@ func TestEqualRange(t *testing.T) {
 	}
 }
 
-func TestOpenCopiesMisalignedInput(t *testing.T) {
+// TestOpenMisalignedInput: go:embed data can start at any address. Open
+// reads it in place where the host loads unaligned integers, copies it
+// elsewhere, and reads the same values either way.
+func TestOpenMisalignedInput(t *testing.T) {
 	b := mustEncode(t, fixture())
 	buf := make([]byte, len(b)+1)
 	copy(buf[1:], b)
 	a := mustOpen(t, buf[1:])
+	if inPlace := &a.data[0] == &buf[1]; inPlace != unalignedLoads {
+		t.Errorf("read in place: %t, want %t on %s", inPlace, unalignedLoads, runtime.GOARCH)
+	}
+	if err := a.Verify(); err != nil {
+		t.Fatal(err)
+	}
 	if ids := a.Table("element").Int32s("id"); !slices.Equal(ids, []int32{5, 26, 143}) {
 		t.Errorf("element ids = %v", ids)
+	}
+	if got, want := a.Manifest(), mustOpen(t, b).Manifest(); !reflect.DeepEqual(got, want) {
+		t.Errorf("manifest %+v, aligned %+v", got, want)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"runtime"
 	"sort"
 	"unicode/utf8"
 	"unsafe"
@@ -49,9 +50,9 @@ type column struct {
 
 // Open checks the header, the directory against Schema, the bounds of every
 // section and the string arena (offsets in range, each string valid UTF-8),
-// then returns the artifact without copying it, unless data is not 8-byte
-// aligned, in which case it is copied once. It does not check the hash or the
-// row order; Verify does.
+// then returns the artifact without copying it. The one exception is data
+// that is not 8-byte aligned on a host other than amd64 or arm64: it is
+// copied once. It does not check the hash or the row order; Verify does.
 func Open(data []byte) (*Artifact, error) {
 	if !littleEndian() {
 		return nil, errors.New("artifact: big-endian hosts are not supported")
@@ -66,7 +67,12 @@ func Open(data []byte) (*Artifact, error) {
 	if n := le.Uint64(data[16:]); n != uint64(len(data)) {
 		return nil, fmt.Errorf("artifact: header says %d bytes, have %d", n, len(data))
 	}
-	if uintptr(unsafe.Pointer(&data[0]))%8 != 0 {
+	// go:embed aligns nothing (cmd/compile gives embedded data alignment 1),
+	// so embedded bytes start wherever the linker packs them. amd64 and
+	// arm64, every target nitrovin ships, load unaligned integers natively,
+	// and checkptr allows unaligned pointers to pointer-free types
+	// (golang/go#37298): read in place there. Copy anywhere else.
+	if uintptr(unsafe.Pointer(&data[0]))%8 != 0 && !unalignedLoads {
 		buf := make([]uint64, (len(data)+7)/8)
 		aligned := unsafe.Slice((*byte)(unsafe.Pointer(&buf[0])), len(data))
 		copy(aligned, data)
@@ -175,6 +181,9 @@ func littleEndian() bool {
 	x := uint16(1)
 	return *(*byte)(unsafe.Pointer(&x)) == 1
 }
+
+// unalignedLoads is whether the host loads unaligned integers natively.
+const unalignedLoads = runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64"
 
 // Month is the data month the artifact was built from, YYYY_MM.
 func (a *Artifact) Month() string { return formatMonth(a.month) }
