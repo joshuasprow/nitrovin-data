@@ -10,7 +10,9 @@
 # embedded manifest: nitrovin's refresh (.github/workflows/refresh.yml there)
 # pushes each gated month that way. A commit that names its refresh run
 # (a "Refresh-Run: <run id>" trailer) also publishes that run's
-# stale-cache.jsonl and parity-<month>.tar.gz (nitrovin's ADR 0006 and 0008).
+# stale-cache.jsonl and parity-<month>.tar.gz (nitrovin's ADR 0006 and 0008)
+# and epa-vehicles.jsonl, the EPA vocabulary the refresh built against the
+# month and gated on `nitrovin vocab check` finding no fault.
 name: Data release
 
 on:
@@ -179,6 +181,9 @@ jobs:
               echo "| refresh | [nitrovin run $REFRESH_RUN](https://github.com/joshuasprow/nitrovin/actions/runs/$REFRESH_RUN): built, and gated against the freshened oracle |"
               echo "| stale-cache | \`stale-cache.jsonl\`: $(wc -l <release/stale-cache.jsonl | tr -d ' ') calls on which the stock and freshened oracles differ |"
               echo "| parity key | \`parity-$MONTH.tar.gz\`: the frozen answer key (\`testdata/parity/$MONTH\`) |"
+              if [ -r release/epa-vehicles.jsonl ]; then
+                echo "| EPA vocabulary | \`epa-vehicles.jsonl\`: EPA's fuel-economy make and model names mapped onto this month, version \`$(head -1 release/epa-vehicles.jsonl | jq -r .version)\`, $(($(wc -l <release/epa-vehicles.jsonl) - 1)) entries; load it with \`nitrovin --vocab epa-vehicles.jsonl\` |"
+              fi
             fi
             echo
             echo 'Every asset has a cosign keyless bundle. To verify one:'
