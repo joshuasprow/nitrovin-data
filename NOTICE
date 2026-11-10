@@ -7,6 +7,12 @@ Government. The decoding procedure this project ports, `spVinDecode`, is part
 of that publication. Each release records the vPIC data month it was built
 from.
 
+The EPA vocabulary each data release carries (epa-vehicles.jsonl) maps the
+make and model names of EPA's fuel-economy data (vehicles.csv), published by
+the U.S. Department of Energy and Environmental Protection Agency at
+https://www.fueleconomy.gov/ as a work of the United States Government. Its
+version records the date of the vehicles.csv it was built from.
+
 Reference implementation: the port's structure, its parity method and its
 registry of documented upstream defects follow ultravin
 (https://github.com/blackthorn-interstellar/ultravin, MIT, Bryce Drennan),

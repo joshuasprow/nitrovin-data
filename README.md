@@ -53,7 +53,14 @@ refresh (its `.github/workflows/refresh.yml`) does that unattended: once the
 month passes nitrovin's parity gates it pushes the commit to `main` with a
 deploy key, naming its run in a `Refresh-Run:` trailer, and the release also
 carries that run's `stale-cache.jsonl` (the calls on which stock and freshened
-Postgres differ) and `parity-<month>.tar.gz` (the frozen answer key).
+Postgres differ), `parity-<month>.tar.gz` (the frozen answer key) and
+`epa-vehicles.jsonl`: the EPA vocabulary, EPA's fuel-economy make and model
+names mapped onto the month's vPIC makes and models, which the refresh builds
+from that day's
+[vehicles.csv](https://www.fueleconomy.gov/feg/download.shtml) with nitrovin's
+`cmd/nitrovin-epa` and publishes only when `nitrovin vocab check` finds no
+fault in it. Load it with `nitrovin --vocab epa-vehicles.jsonl`; nitrovin's
+README ("The data") says more.
 
-The data is NHTSA's, a work of the United States Government; see `NOTICE`.
-The code is MIT.
+The data is NHTSA's and EPA's, works of the United States Government; see
+`NOTICE`. The code is MIT.
