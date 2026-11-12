@@ -35,6 +35,6 @@
   "importer": {
     "module": "github.com/joshuasprow/nitrovin",
     "package": "cmd/nitrovin-import",
-    "commit": "b105822ada1d05278d4afc8037c93ec47831168d"
+    "commit": "97eb24a9d17cd6d886497982440c980f15ce26fc"
   }
 }
