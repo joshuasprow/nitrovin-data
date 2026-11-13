@@ -17,11 +17,11 @@ import (
 )
 
 // Month is the embedded artifact's data month, YYYY_MM.
-const Month = "2026_10"
+const Month = "2026_11"
 
 // BLAKE3 is the embedded artifact's hash in hex, as its header records it
 // and artifact.Artifact.Hash returns it.
-const BLAKE3 = "7518c5b46c4264fe94a8e5158cb1949b000e50803b36d388fec9ebe914a780cb"
+const BLAKE3 = "dd565ff9a1878af2366b1d5e8e26efc1684cb969ceb23abd7bc274373006af19"
 
 // data is a string so that its bytes are read-only data in the binary: a
 // write through Artifact faults instead of corrupting every decoder.
